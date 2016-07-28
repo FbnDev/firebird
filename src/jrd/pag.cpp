@@ -633,10 +633,6 @@ PAG PAG_allocate_pages(thread_db* tdbb, WIN* window, int cntAlloc, bool aligned)
 					PageNumber(pageSpace->pageSpaceID, lastBit + sequence * pageMgr.pagesPerPIP));
 			}
 
-			window->win_page = firstBit + sequence * pageMgr.pagesPerPIP;
-			new_page = CCH_fake(tdbb, window, 1);
-			fb_assert(new_page);
-
 			CCH_MARK(tdbb, &pip_window);
 
 			for (ULONG i = firstBit; i <= lastBit; i++)
@@ -729,8 +725,14 @@ PAG PAG_allocate_pages(thread_db* tdbb, WIN* window, int cntAlloc, bool aligned)
 
 		CCH_RELEASE(tdbb, &pip_window);
 
-		if (new_page)
+		if (!toAlloc)
+		{
+			window->win_page = firstBit + sequence * pageMgr.pagesPerPIP;
+			new_page = CCH_fake(tdbb, window, LCK_WAIT);
+			fb_assert(new_page);
+
 			CCH_precedence(tdbb, window, pip_window.win_page);
+		}
 	}
 
 	return new_page;
@@ -2037,7 +2039,7 @@ ULONG PageSpace::maxAlloc()
 	const jrd_file* f = file;
 	ULONG nPages = 0;
 
-	if (maxPageNumber == 0 && !PIO_on_raw_device(f->fil_string))
+	if (!PIO_on_raw_device(f->fil_string))
 	{
 		nPages = PIO_get_number_of_pages(f, pageSize);
 
@@ -2068,6 +2070,7 @@ ULONG PageSpace::maxAlloc()
 		{
 			window.win_page = (!sequence) ? pipFirst : sequence * pagesPerPip - 1;
 			ULONG pipUsed = 0;
+			UCHAR lastByte;
 			const page_inv_page* page = NULL;
 
 			for (FB_SIZE_T n = 0; n < tdbb->tdbb_bdbs.getCount(); ++n)
@@ -2077,18 +2080,21 @@ ULONG PageSpace::maxAlloc()
 				{
 					page = (page_inv_page*)(bdb->bdb_buffer);
 					pipUsed = page->pip_used;
+					lastByte = page->pip_bits[dbb->dbb_page_manager.bytesBitPIP - 1];
 					break;
 				}
 			}
 
+			bool lastPIP = false;
 			if (!page)
 			{
 				page = (page_inv_page*) CCH_FETCH(tdbb, &window, LCK_read, pag_pages);
 				pipUsed = page->pip_used;
+				lastByte = page->pip_bits[dbb->dbb_page_manager.bytesBitPIP - 1];
 				CCH_RELEASE(tdbb, &window);
 			}
 
-			if (pipUsed != pagesPerPip)
+			if (lastByte & 0x80)
 			{
 				nPages = sequence * pagesPerPip + pipUsed;
 				break;
@@ -2524,8 +2530,11 @@ void PAG_set_page_scn(thread_db* tdbb, win* window)
 	win scn_window(pageSpace->pageSpaceID, scn_page);
 
 	scns_page* page = (scns_page*) CCH_FETCH(tdbb, &scn_window, LCK_write, pag_scns);
-	CCH_MARK(tdbb, &scn_window);
-	page->scn_pages[scn_slot] = curr_scn;
+	if (page->scn_pages[scn_slot] != curr_scn)
+	{
+		CCH_MARK(tdbb, &scn_window);
+		page->scn_pages[scn_slot] = curr_scn;
+	}
 	CCH_RELEASE(tdbb, &scn_window);
 
 	CCH_precedence(tdbb, window, scn_page);

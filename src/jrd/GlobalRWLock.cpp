@@ -129,6 +129,16 @@ bool GlobalRWLock::lockWrite(thread_db* tdbb, SSHORT wait)
 
 		fb_assert(!readers && !currentWriter);
 
+		if (cachedLock->lck_physical == LCK_write)
+		{
+			--pendingWriters;
+
+			fb_assert(!currentWriter);
+			currentWriter = true;
+
+			return true;
+		}
+
 		if (cachedLock->lck_physical > LCK_none)
 		{
 			LCK_release(tdbb, cachedLock);	// To prevent self deadlock
@@ -234,7 +244,7 @@ bool GlobalRWLock::lockRead(thread_db* tdbb, SSHORT wait, const bool queueJump)
 			COS_TRACE(("(%p)->lockRead stage 3 readers(%d), blocking(%d), pendingWriters(%d), currentWriter(%d), lck_physical(%d)",
 				this, readers, blocking, pendingWriters, currentWriter, cachedLock->lck_physical));
 
-			if (!pendingLock)
+			if (!pendingLock) // && !blocking ?
 				break;
 
 			MutexUnlockGuard cout(counterMutex, FB_FUNCTION);
