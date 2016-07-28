@@ -424,12 +424,9 @@ public:
 
 		if (stateBlocking && localStateLock.tryBeginWrite(FB_FUNCTION))
 		{
-			//stateLock->unlockRead(tdbb);
 			if (!stateLock->tryReleaseLock(tdbb))
-			{
 				fb_assert(false);
-				MessageBox(NULL, "tryReleaseLock", "tryReleaseLock", MB_OK);
-			}
+
 			stateBlocking = false;
 			localStateLock.endWrite();
 		}
